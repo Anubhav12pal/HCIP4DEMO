@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Everyday Voice Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel-2:#1d2639; --ink:#e8edf6;
+    --muted:#9aa7bd; --line:#2a344a; --accent:#4f8cff; --accent-soft:#1f3350;
+    --good:#49c17c; --warn:#f0a93b; --bad:#e5604d;
+    --user:#2b6fff; --asst:#273449;
+    --radius:16px;
+    --fs-base:16px;
+  }
+  /* Age-adapted theme overrides (applied on body.adapted) */
+  body.adapted{
+    --bg:#f6f7fb; --panel:#ffffff; --panel-2:#eef2f9; --ink:#0e1726;
+    --muted:#3f4b61; --line:#c7d2e3; --accent:#1256d6;
+    --user:#0b4fd0; --asst:#e7eefb;
+    --good:#1d8a4e; --warn:#a85f00; --bad:#c23b28;
+    --fs-base:22px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"Atkinson Hyperlegible",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:var(--fs-base); line-height:1.5;
+    min-height:100vh;
+    transition:background .25s ease,color .25s ease;
+  }
+  button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  .wrap{max-width:1040px;margin:0 auto;padding:20px 18px 48px}
+
+  /* ---------- Top bar ---------- */
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+  .brand{display:flex;align-items:center;gap:12px}
+  .logo{width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,var(--accent),#7db0ff);
+    display:grid;place-items:center;color:#fff;font-weight:700;font-size:20px;flex:none}
+  .brand h1{font-size:1.15em;margin:0;letter-spacing:.2px}
+  .brand p{margin:0;color:var(--muted);font-size:.72em}
+
+  .modewrap{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);
+    padding:8px 12px;border-radius:999px}
+  .modewrap .lbl{font-size:.8em;color:var(--muted);font-weight:600}
+  .seg{display:flex;background:var(--panel-2);border-radius:999px;padding:4px;gap:4px}
+  .seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:.82em;font-weight:600;
+    padding:8px 14px;border-radius:999px;cursor:pointer;white-space:nowrap}
+  .seg button.active{background:var(--accent);color:#fff;box-shadow:0 2px 8px rgba(79,140,255,.35)}
+
+  /* ---------- Layout ---------- */
+  .grid{display:grid;grid-template-columns:1.05fr .95fr;gap:18px}
+  @media (max-width:820px){.grid{grid-template-columns:1fr}}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  .card h2{margin:0 0 4px;font-size:.95em;letter-spacing:.3px}
+  .card .sub{color:var(--muted);font-size:.74em;margin:0 0 14px}
+
+  /* ---------- Assistant / mic ---------- */
+  .assistant{display:flex;flex-direction:column;align-items:center;text-align:center}
+  .orb{width:132px;height:132px;border-radius:50%;margin:6px 0 14px;position:relative;
+    background:radial-gradient(circle at 50% 38%,#6ea6ff,var(--accent));display:grid;place-items:center;
+    box-shadow:0 0 0 0 rgba(79,140,255,.45);transition:transform .2s}
+  body.adapted .orb{background:radial-gradient(circle at 50% 38%,#4f8cff,var(--accent))}
+  .orb svg{width:52px;height:52px;fill:#fff}
+  .orb.listening{animation:pulse 1.3s infinite}
+  .orb.speaking{animation:pulse 0.7s infinite}
+  .orb.thinking{animation:breathe 1.6s ease-in-out infinite}
+  @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(.94)}}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(79,140,255,.45)}70%{box-shadow:0 0 0 22px rgba(79,140,255,0)}100%{box-shadow:0 0 0 0 rgba(79,140,255,0)}}
+  @media (prefers-reduced-motion:reduce){.orb{animation:none!important}}
+
+  .status{font-weight:600;min-height:1.4em;margin-bottom:2px}
+  .status.err{color:var(--bad)}
+  .hint{color:var(--muted);font-size:.78em;margin-bottom:14px}
+
+  /* "I heard" feedback (adapted only) */
+  .heard{display:none;width:100%;margin:0 0 14px;padding:10px 14px;border-radius:12px;text-align:left;
+    background:var(--panel-2);border:1.5px dashed var(--line);font-size:.86em}
+  body.adapted .heard.show{display:block}
+  .heard .hl{display:block;font-size:.7em;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .heard.live{border-color:var(--accent)}
+
+  .micbtn{border:0;cursor:pointer;font:inherit;font-weight:700;color:#fff;background:var(--accent);
+    padding:14px 26px;border-radius:999px;font-size:1em;display:inline-flex;align-items:center;gap:10px;
+    box-shadow:0 6px 18px rgba(79,140,255,.3)}
+  .micbtn:active{transform:translateY(1px)}
+  .micbtn.stop{background:var(--bad);box-shadow:0 6px 18px rgba(229,96,77,.3)}
+  .micbtn svg{width:20px;height:20px;fill:#fff}
+
+  .repeatbtn{margin-top:12px;border:1.5px solid var(--line);background:var(--panel-2);color:var(--ink);
+    font:inherit;font-weight:600;font-size:.9em;padding:11px 20px;border-radius:999px;cursor:pointer;
+    display:none;align-items:center;gap:8px}
+  /* Repeat and Help buttons are age-adapted features; the standard condition relies on voice commands only */
+  body.adapted .repeatbtn{display:inline-flex;border-color:var(--accent);color:var(--accent);font-size:1em;padding:13px 24px}
+  .repeatbtn svg{width:17px;height:17px;fill:currentColor}
+  .ctlrow{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+
+  .typerow{display:flex;gap:8px;width:100%;margin-top:16px}
+  .typerow input{flex:1;min-width:0;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+    font:inherit;font-size:.9em;padding:11px 14px;border-radius:12px}
+  .typerow input::placeholder{color:var(--muted)}
+  .typerow button{border:0;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+    font:inherit;font-weight:600;padding:0 16px;border-radius:12px;cursor:pointer}
+
+  /* ---------- Task shortcut buttons ---------- */
+  .tasks{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;justify-content:center}
+  .tasks .t{border:1px solid var(--line);background:var(--panel-2);color:var(--ink);font:inherit;
+    font-size:.78em;font-weight:600;padding:9px 13px;border-radius:999px;cursor:pointer;display:flex;align-items:center;gap:6px}
+  body.adapted .tasks .t{font-size:.86em;padding:11px 15px}
+  .tasks .t:hover{border-color:var(--accent)}
+  .tasks .t .ic{font-size:1.05em}
+  .tasks .t.sim{border-style:dashed}
+  .demohdr{width:100%;text-align:center;color:var(--muted);font-size:.68em;letter-spacing:.14em;
+    text-transform:uppercase;margin:18px 0 2px;font-weight:700}
+
+  /* ---------- Transcript ---------- */
+  .transcript{height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-right:6px}
+  body.adapted .transcript{height:340px}
+  .bubble{max-width:86%;padding:11px 15px;border-radius:14px;font-size:.92em;line-height:1.5;white-space:pre-wrap}
+  /* standard condition: compact captions; adapted condition: large-text transcript */
+  body.standard .bubble{font-size:.8em;padding:8px 12px}
+  body.adapted .bubble{font-size:1.02em;line-height:1.65;max-width:92%;padding:14px 18px}
+  .bubble.user{align-self:flex-end;background:var(--user);color:#fff;border-bottom-right-radius:4px}
+  .bubble.asst{align-self:flex-start;background:var(--asst);color:var(--ink);border-bottom-left-radius:4px;border:1px solid var(--line)}
+  .bubble .who{display:block;font-size:.66em;letter-spacing:.1em;text-transform:uppercase;opacity:.7;margin-bottom:3px;font-weight:700}
+  .empty{color:var(--muted);text-align:center;margin:auto;font-size:.85em}
+
+  /* ---------- Result cards (timer/reminders/weather) ---------- */
+  .panelstack{display:flex;flex-direction:column;gap:14px;margin-top:16px}
+  .result{background:var(--panel-2);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+  .result .rh{display:flex;align-items:center;gap:8px;font-weight:700;font-size:.82em;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;flex-wrap:wrap}
+  .simtag{margin-left:auto;font-size:.82em;letter-spacing:.06em;padding:2px 8px;border-radius:999px;
+    border:1px dashed var(--muted);color:var(--muted);font-weight:700}
+  .simnote{color:var(--muted);font-size:.72em;margin-top:8px}
+  .timerbig{font-size:2.2em;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:1px}
+  .timerbig.done{color:var(--good)}
+  .timerrow{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .timerclose{font:inherit;font-weight:700;font-size:.9em;padding:10px 18px;min-height:44px;border-radius:12px;cursor:pointer;
+    background:var(--panel);color:var(--ink);border:1.5px solid var(--line)}
+  .timerclose:hover{border-color:var(--bad);color:var(--bad)}
+  body.adapted .timerclose{font-size:1em;padding:12px 22px;min-height:52px}
+  .remlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .remlist li{display:flex;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:9px 12px;font-size:.9em}
+  .remlist li .time{color:var(--accent);font-weight:700;white-space:nowrap}
+  .weather{display:flex;align-items:center;gap:14px}
+  .weather .temp{font-size:2em;font-weight:700}
+  .weather .ic{font-size:2.4em}
+  .confirm{border-color:var(--warn);background:rgba(240,169,59,.1)}
+  body.adapted .confirm{background:rgba(240,169,59,.16);border-width:2px}
+  .confirm .rh{color:var(--warn)}
+  .confirm .cbtns{display:flex;gap:10px;margin-top:10px}
+  .confirm .cbtns button{flex:1;border:0;font:inherit;font-weight:700;padding:11px;border-radius:10px;cursor:pointer;font-size:.9em}
+  body.adapted .confirm .cbtns button{font-size:1em;padding:13px}
+  .cbtns .yes{background:var(--good);color:#fff}
+  .cbtns .no{background:var(--panel);border:1px solid var(--line)!important;color:var(--ink)}
+
+  .footer{color:var(--muted);font-size:.72em;text-align:center;margin-top:26px;line-height:1.6}
+  .footer code{background:var(--panel-2);padding:2px 6px;border-radius:5px;border:1px solid var(--line)}
+  .footer .legend{display:inline-block;text-align:left;margin:8px auto 10px;max-width:720px}
+  .linkbtn{border:0;background:none;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer;padding:0}
+
+  /* mode badge for screenshots */
+  .modebadge{display:inline-block;font-size:.68em;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+    padding:4px 10px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line);color:var(--muted)}
+  body.adapted .modebadge{background:var(--accent);color:#fff;border-color:transparent}
+
+  /* ---------- Experimenter panel (hidden unless study mode is on) ---------- */
+  .study{display:none;margin-top:18px;font-size:15px}
+  body.study .study{display:block}
+  .study .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .study input,.study select{font:inherit;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
+    border-radius:8px;padding:7px 10px}
+  .study button{font:inherit;font-weight:600;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);
+    border-radius:8px;padding:7px 12px;cursor:pointer}
+  .study button.go{background:var(--accent);color:#fff;border-color:transparent}
+  .study button.ok{background:var(--good);color:#fff;border-color:transparent}
+  .study button.fail{background:var(--bad);color:#fff;border-color:transparent}
+  .study button:disabled{opacity:.45;cursor:not-allowed}
+  .study .live{font-variant-numeric:tabular-nums;color:var(--muted)}
+  .study table{width:100%;border-collapse:collapse;font-size:.88em;font-variant-numeric:tabular-nums}
+  .study th,.study td{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left}
+  .study .tablewrap{overflow-x:auto}
+
+  /* ============ Guided study session (welcome, instructions, questionnaires) ============ */
+  .flow{position:fixed;inset:0;z-index:60;overflow-y:auto;color:#0f172a;font-size:20px;line-height:1.55;
+    background:
+      radial-gradient(1100px 560px at 8% -12%, #d9e6ff 0%, transparent 60%),
+      radial-gradient(900px 520px at 108% 6%, #ece2ff 0%, transparent 58%),
+      radial-gradient(700px 500px at 50% 120%, #dff4ee 0%, transparent 60%), #f5f7fc}
+  .flow[hidden]{display:none}
+  .flow-inner{max-width:780px;margin:0 auto;padding:26px 16px 56px}
+  .flow-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:20px;flex-wrap:wrap}
+  .brandmini{display:flex;gap:10px;align-items:center;font-weight:700;font-size:.9em;color:#1e293b}
+  .brandmini .dot{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;color:#fff;
+    background:linear-gradient(135deg,#1256d6,#7c5cff);box-shadow:0 6px 16px -6px rgba(18,86,214,.6)}
+  .steps{display:flex;gap:6px}
+  .steps i{width:26px;height:6px;border-radius:99px;background:#d5ddec;transition:background .3s}
+  .steps i.done{background:#9db8ee} .steps i.on{background:linear-gradient(90deg,#1256d6,#7c5cff)}
+  .fcard{background:rgba(255,255,255,.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(203,213,230,.8);border-radius:26px;padding:34px 32px;outline:none;
+    box-shadow:0 1px 2px rgba(15,23,42,.04),0 24px 60px -24px rgba(30,64,175,.28);animation:rise .35s ease}
+  @keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){.fcard{animation:none}}
+  .eyebrow{font-size:.7em;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#1256d6;margin:0 0 10px}
+  .fcard h1{font-size:1.75em;line-height:1.18;margin:0 0 12px;letter-spacing:-.015em;outline:none}
+  .fcard h2{font-size:1.05em;margin:26px 0 12px}
+  .lead{color:#334155;margin:0 0 6px}
+  .ask{font-weight:700;margin:22px 0 0}
+  .note{margin-top:18px;padding:14px 16px;border-radius:14px;background:#eefaf4;border:1px solid #c9ecda;color:#14532d;font-size:.9em}
+  .facts{display:grid;gap:12px;margin:20px 0 0}
+  .fact{display:flex;gap:14px;align-items:flex-start;padding:14px 16px;border-radius:16px;background:#f4f7fd;border:1px solid #e3eaf6}
+  .fact .ic,.tile .ic{flex:none;width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:1.1em;
+    background:#fff;box-shadow:0 2px 8px -2px rgba(15,23,42,.12)}
+  .fact b{display:block} .fact span{color:#475569;font-size:.92em}
+  .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .tile{padding:16px;border-radius:16px;background:#f4f7fd;border:1px solid #e3eaf6;font-size:.9em}
+  .tile .ic{margin-bottom:10px} .tile b{display:block;margin-bottom:2px;font-size:1.05em}
+  .timeline{display:grid;gap:14px}
+  .tl{display:grid;grid-template-columns:46px 1fr;gap:14px;align-items:start}
+  .tl .n{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;
+    background:linear-gradient(135deg,#1256d6,#7c5cff)}
+  .tl b{display:block} .tl span{color:#475569;font-size:.92em}
+  .tasklist{list-style:none;margin:18px 0 0;padding:0;display:grid;gap:10px}
+  .tasklist li{display:flex;gap:14px;align-items:center;padding:14px 16px;border-radius:16px;background:#f4f7fd;border:1px solid #e3eaf6}
+  .tasklist .ic{font-size:1.3em}
+  .actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
+  .btn{font:inherit;font-weight:700;border-radius:15px;padding:14px 24px;min-height:58px;cursor:pointer;flex:1 1 200px;
+    border:2px solid transparent;transition:transform .12s ease,box-shadow .2s ease,opacity .2s}
+  .btn.primary{color:#fff;background:linear-gradient(135deg,#1256d6,#4c6ef5);box-shadow:0 12px 26px -12px rgba(18,86,214,.7)}
+  .btn.primary:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 16px 30px -12px rgba(18,86,214,.75)}
+  .btn.ghost{background:#fff;border-color:#cdd7ea;color:#0f172a}
+  .btn.ghost:hover{border-color:#1256d6}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn:focus-visible,.choice:focus-visible,.likert button:focus-visible{outline:3px solid #f59e0b;outline-offset:2px}
+  .choices{display:grid;gap:12px;margin-top:22px}
+  .choice{display:flex;align-items:center;gap:16px;width:100%;text-align:left;font:inherit;cursor:pointer;
+    padding:18px 20px;border-radius:18px;background:#fff;border:2px solid #d7dfee;transition:border-color .15s,background .15s}
+  .choice:hover{border-color:#1256d6}
+  .choice .radio{flex:none;width:26px;height:26px;border-radius:50%;border:2px solid #94a3b8;display:grid;place-items:center}
+  .choice[aria-checked="true"]{border-color:#1256d6;background:#eef3ff}
+  .choice[aria-checked="true"] .radio{border-color:#1256d6;background:#1256d6;box-shadow:inset 0 0 0 5px #fff}
+  .choice b{display:block} .choice span{color:#475569;font-size:.88em}
+  .progressline{height:8px;border-radius:99px;background:#e3e8f2;overflow:hidden;margin:4px 0 22px}
+  .progressline span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#1256d6,#7c5cff);transition:width .35s ease}
+  .q{padding:20px 0;border-top:1px solid #e6ecf7}
+  .q:first-of-type{border-top:0;padding-top:4px}
+  .q p{margin:0 0 12px;font-weight:600;display:flex;gap:12px}
+  .qn{flex:none;width:30px;height:30px;border-radius:9px;background:#eef3ff;color:#1256d6;display:grid;place-items:center;font-size:.8em;font-weight:700}
+  .likert{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+  .likert button{font:inherit;font-weight:700;min-height:54px;border-radius:13px;border:2px solid #d0d9ea;background:#fff;color:#0f172a;cursor:pointer;transition:all .15s}
+  .likert button:hover{border-color:#1256d6}
+  .likert button[aria-checked="true"]{background:linear-gradient(135deg,#1256d6,#4c6ef5);border-color:transparent;color:#fff;transform:scale(1.03)}
+  .scale-labels{display:flex;justify-content:space-between;gap:12px;font-size:.72em;color:#64748b;margin-top:7px}
+  .scale-labels output{font-weight:700;color:#1256d6;font-size:1.3em}
+  .flow input[type=range]{width:100%;height:44px;background:transparent;-webkit-appearance:none;appearance:none;cursor:pointer}
+  .flow input[type=range]::-webkit-slider-runnable-track{height:10px;border-radius:99px;background:linear-gradient(90deg,#c7d7f8,#d9c9ff)}
+  .flow input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;margin-top:-11px;border-radius:50%;
+    background:#fff;border:3px solid #1256d6;box-shadow:0 4px 10px -2px rgba(18,86,214,.5)}
+  .flow input[type=range]::-moz-range-track{height:10px;border-radius:99px;background:linear-gradient(90deg,#c7d7f8,#d9c9ff)}
+  .flow input[type=range]::-moz-range-thumb{width:28px;height:28px;border-radius:50%;background:#fff;border:3px solid #1256d6}
+  .flow input[type=range].untouched::-webkit-slider-thumb{border-color:#94a3b8;box-shadow:none}
+  .flow .textin{width:100%;font:inherit;font-size:.95em;padding:14px 16px;min-height:56px;border-radius:14px;border:2px solid #d0d9ea;background:#fff;color:#0f172a}
+  .flow .textin:focus{outline:none;border-color:#1256d6}
+  .flow .opt{font-weight:400;color:#64748b}
+  .formerr{margin:10px 0 0;color:#b42318;font-weight:600;font-size:.88em}
+  .flow textarea{width:100%;min-height:110px;font:inherit;font-size:.92em;padding:14px 16px;border-radius:14px;border:2px solid #d0d9ea;background:#fff;resize:vertical}
+  .flow textarea:focus{outline:none;border-color:#1256d6}
+  .flow label.field{display:block;font-weight:600;margin:22px 0 8px}
+  .code{display:inline-block;font-weight:700;letter-spacing:.08em;padding:6px 12px;border-radius:10px;background:#eef3ff;color:#1256d6}
+  .bigcheck{width:76px;height:76px;border-radius:50%;display:grid;place-items:center;font-size:2.1em;color:#fff;margin-bottom:16px;
+    background:linear-gradient(135deg,#16a34a,#22c55e);box-shadow:0 14px 30px -12px rgba(22,163,74,.6)}
+  @media (max-width:640px){.flow{font-size:18px}.fcard{padding:24px 18px;border-radius:22px}.tiles{grid-template-columns:1fr}.fcard h1{font-size:1.5em}}
+
+  /* ---------- Session bar shown while a participant is using one version ---------- */
+  .sessionbar{display:none;position:sticky;top:0;z-index:40;background:rgba(255,255,255,.92);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:16px}
+  body.in-session .sessionbar{display:block}
+  /* during the study the participant phrases every request; shortcuts would do the tasks for them */
+  .sessionbar .inner{max-width:1040px;margin:0 auto;padding:10px 18px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+  .sb-part{display:flex;align-items:center;gap:10px;font-weight:700}
+  .sb-pill{font-size:.75em;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;border-radius:99px;color:#fff;
+    background:linear-gradient(135deg,#1256d6,#7c5cff)}
+  .sb-tasks{display:flex;gap:8px;flex-wrap:wrap;flex:1}
+  .sb-task{display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:99px;border:1.5px solid #d0d9ea;background:#fff;cursor:pointer;font-size:.92em;user-select:none}
+  .sb-task input{width:20px;height:20px;accent-color:#16a34a;margin:0}
+  .sb-task:has(input:checked){border-color:#16a34a;background:#effaf3;color:#14532d}
+  .sb-finish{font:inherit;font-weight:700;border:0;border-radius:12px;padding:11px 18px;cursor:pointer;color:#fff;
+    background:linear-gradient(135deg,#1256d6,#4c6ef5);box-shadow:0 8px 18px -10px rgba(18,86,214,.7)}
+
+  /* ---------- "You can ask" list ---------- */
+  .asklist{width:100%;margin-top:18px;text-align:left}
+  .asklist h3{margin:0 0 8px;font-size:.78em;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  #askList{display:grid;gap:8px}
+  .ask-item{font:inherit;font-size:.86em;text-align:left;padding:11px 14px;border-radius:12px;cursor:pointer;
+    background:var(--panel-2);color:var(--ink);border:1px solid var(--line);transition:border-color .15s,transform .1s}
+  .ask-item:hover{border-color:var(--accent)} .ask-item:active{transform:scale(.99)}
+  body.adapted .ask-item{padding:13px 16px}
+</style>
+</head>
+<body class="standard">
+<div class="flow" id="flow" role="dialog" aria-modal="true" aria-label="Study session" hidden></div>
+<div class="sessionbar" id="sessionBar"><div class="inner">
+  <div class="sb-part"><span class="sb-pill">Now using</span><span id="sbVersion">Standard version</span></div>
+  <button class="sb-finish" id="sbFinish">Done →</button>
+</div></div>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo">◉</div>
+      <div>
+        <h1>Everyday Voice Assistant <span class="modebadge" id="modeBadge">Standard mode</span></h1>
+        <p>CS 6326 · UT Dallas</p>
+      </div>
+    </div>
+    <div class="modewrap">
+      <span class="lbl">Interface</span>
+      <div class="seg" role="tablist" aria-label="Interface mode">
+        <button id="btnStandard" class="active" role="tab" aria-selected="true">Standard</button>
+        <button id="btnAdapted" role="tab" aria-selected="false">Age-Adapted</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- LEFT: assistant -->
+    <div class="card assistant">
+      <h2 style="align-self:flex-start">Talk to the assistant</h2>
+      <p class="sub" style="align-self:flex-start">Tap the button and speak, or type a question.</p>
+
+      <div class="orb" id="orb" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2z"/></svg>
+      </div>
+
+      <div class="status" id="status" role="status">Ready</div>
+      <div class="hint" id="hint">Ask a question from the list, or your own.</div>
+
+      <div class="heard" id="heard" aria-live="polite"><span class="hl" id="heardLbl">I heard</span><span id="heardTxt"></span></div>
+
+      <button class="micbtn" id="micBtn">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2z"/></svg>
+        <span id="micLabel">Tap to speak</span>
+      </button>
+
+      <div class="ctlrow">
+        <button class="repeatbtn" id="repeatBtn">
+          <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg>
+          Repeat that
+        </button>
+        <button class="repeatbtn" id="helpBtn">
+          <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 17h-2v-2h2v2zm2.07-7.75-.9.92A3.4 3.4 0 0 0 13 15h-2v-.5a4 4 0 0 1 1.17-2.83l1.24-1.26A2 2 0 1 0 10 9H8a4 4 0 1 1 7.07 2.25z"/></svg>
+          Help
+        </button>
+      </div>
+
+      <div class="typerow">
+        <input id="textIn" type="text" placeholder="…or type a question and press Enter" aria-label="Type a command">
+        <button id="sendBtn">Send</button>
+      </div>
+
+      <div class="asklist">
+        <h3>You can ask</h3>
+        <div id="askList"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: transcript + results -->
+    <div class="card">
+      <h2>Conversation</h2>
+      <p class="sub">A running transcript of what you said and how the assistant replied.</p>
+      <div class="transcript" id="transcript" aria-live="polite">
+        <div class="empty" id="emptyMsg">Your conversation will appear here.</div>
+      </div>
+      <div class="panelstack" id="panelStack"></div>
+    </div>
+  </div>
+
+  <!-- Experimenter panel: toggled from the footer link or with ?study=1 -->
+  <div class="card study" id="studyPanel">
+    <h2>Experimenter panel</h2>
+    <p class="sub">Logs task success, completion time, interaction errors, Repeat and Help use for each trial. Not shown to participants.</p>
+    <div class="row">
+      <label>Participant <input id="pid" size="6" placeholder="P01"></label>
+      <label>Task <select id="taskSel">
+        <option value="T1">T1 · Weather — “What is tomorrow’s weather?”</option>
+        <option value="T2">T2 · Reminder — “Take medication at 8 PM”</option>
+        <option value="T3">T3 · Timer — “Set a 5-minute timer”</option>
+        <option value="T4">T4 · Date — “What day is it today?”</option>
+      </select></label>
+    </div>
+    <div class="row">
+      <button class="go" id="taskStart">Start task</button>
+      <button class="ok" id="taskOk" disabled>Success</button>
+      <button class="fail" id="taskFail" disabled>Fail / gave up</button>
+      <span class="live" id="taskLive">No task running</span>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Participant</th><th>Age group</th><th>Condition</th><th>Task</th><th>Result</th><th>Time (s)</th><th>Turns</th><th>Errors</th><th>Repeats</th><th>Help</th></tr></thead>
+      <tbody id="trialRows"></tbody>
+    </table></div>
+    <div class="row" style="margin-top:10px">
+      <button id="exportTrials">Export trials (CSV)</button>
+      <button id="exportEvents">Export event log (CSV)</button>
+      <button id="exportSessions">Export all saved sessions (JSON)</button>
+      <button id="clearTrials">Clear</button>
+    </div>
+  </div>
+
+</div>
+
+<script src="config.js"></script>
+<script src="questions.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
