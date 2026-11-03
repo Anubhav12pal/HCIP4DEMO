@@ -18,32 +18,43 @@ common questions, each written twice, once for each version of the interface.
 | Repeat and Help | By voice only | Also as on-screen buttons |
 | Misunderstandings | "Sorry, I didn't understand that." | An example first, then a full list of options |
 
-## What a participant goes through (about 5 minutes)
+## What a participant goes through (about 15–20 minutes)
 
-1. **Consent:** "This is a UTD CS-6326 HCI survey… Are you sure you want to proceed?"
-2. **"Are you 65 or older?"** This decides which version comes first. Everyone tries both.
-3. **How it works:** three short lines.
-4. **First version:** ask a few questions. A "You can ask" list is always next to the assistant, so there's
-   nothing to remember. Then three quick 1–5 questions: easy to use, understood what it said, took effort.
-5. **Second version:** the same again.
-6. **Which did you prefer?** Plus an optional comment.
+1. **Consent:** what the study is, what is recorded (no audio, no names), and that they can stop at any time.
+2. **About you:** age range, how often they use voice assistants, which ones they have used.
+3. **How it works:** read the task, press Start task, speak or type, move on.
+4. **Version 1:** a practice task (how to boil an egg, not scored), then four timed tasks:
+   T1 tomorrow's weather, T2 a reminder to take medication at 8 PM, T3 a 5-minute timer, T4 today's date.
+   A task counts as **completed** when the assistant reaches the goal state (for example, a 5-minute timer is
+   actually running). Participants can skip a task; after 3 minutes it is recorded as timed out.
+5. **SUS** (10 standard items) and **raw NASA-TLX** (6 scales, 0–100), plus an optional "what made it difficult?"
+6. **Version 2:** the same practice task, the same four tasks, the same two questionnaires.
+7. **Preference** (Version 1 / Version 2 / no preference), why, and one suggested improvement.
 
-A switch at the top always shows which version is in use (Standard or Age-Adapted), and participants can
-use it to compare the two.
+Participants only ever see "Version 1" and "Version 2". The version switch and the example list are hidden during
+the study, and the assistant only responds while a task is running.
 
-## Where the results go
+## Links to send (counterbalancing)
 
-**Google Sheet (recommended).** Follow `google-sheet/SETUP.md` once, then paste the Sheet's web app link into
-`config.js`. Every finished survey is added as a row in that Sheet, from localhost and from GitHub Pages alike.
-You can also get an email for each survey.
+| Link | Use for |
+|---|---|
+| `…/index.html?order=1&pid=P01` | Odd-numbered participants: Standard first |
+| `…/index.html?order=2&pid=P02` | Even-numbered participants: Age-Adapted first |
+| `…/index.html?test=1` | Your own test runs: saved to the **Test runs** tab only |
+| `…/index.html?free=1` | Demo mode with the version switch, no data saved to the Sheet |
 
-**Backup on the device.** Every survey is also kept in the browser:
+`pid` is optional (format P01–P999). Without it, a random ID like `P-K3ZQ` is used. Without `order`, the order is
+random. Keep a short private list of which ID went to whom, separate from the data.
 
-- The thank-you screen has a **Download results** button that saves that participant's JSON file.
-- Open the page with `?free=1&study=1` and use **Export all saved sessions** to download every survey kept on
-  that device.
-- If the internet is down when someone submits, the survey is sent automatically the next time the app is
-  opened online.
+## Measures recorded per task
+
+| Field | Meaning |
+|---|---|
+| Completed? / Outcome | Success when the goal state is reached; otherwise Skipped or Timed out (180 s) |
+| Time (s) | From pressing Start task to reaching the goal |
+| Errors | Requests the assistant did not understand, plus unclear answers to a Yes/No confirmation |
+| Turns, Repeats, Help | Number of requests, Repeat uses, Help uses |
+| Voice / typed turns | How each request was entered |
 
 ## Run it locally
 
@@ -53,7 +64,7 @@ Open `index.html` in a browser, or for working speech recognition, serve the fol
 python3 -m http.server 8000
 ```
 
-Then open http://localhost:8000 in Google Chrome. Add `?free=1` to skip the study flow and just use the assistant.
+Then open http://localhost:8000/?test=1 in Google Chrome.
 
 ## Deploy to GitHub Pages
 

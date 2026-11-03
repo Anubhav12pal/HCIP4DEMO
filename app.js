@@ -40,10 +40,6 @@ function setMode(m){
   $('btnStandard').setAttribute('aria-selected', m==='standard');
   $('btnAdapted').setAttribute('aria-selected', m==='adapted');
   $('modeBadge').textContent = m==='adapted' ? 'Age-Adapted mode' : 'Standard mode';
-  if(body.classList.contains('in-session')) $('sbVersion').textContent = `${m==='adapted'?'Age-Adapted':'Standard'} version`;
-  $('hint').textContent = m==='adapted'
-    ? 'Ask a question from the list, or your own.'
-    : 'Ask a question from the list, or your own.';
   App.pending = null; App.misses = 0; App.awaiting = null;
   $('heard').classList.remove('show','live');
   renderPanels();
@@ -106,8 +102,15 @@ function help(){
     ? "I can help with five things. The weather. A timer. A reminder. The date. And common questions, like how to boil an egg. What would you like?"
     : "I can check the weather, set timers and reminders, tell you the date and time, and answer common questions about health, cooking, technology and more. What would you like?");
 }
-$('repeatBtn').onclick = ()=>{ addBubble('Repeat that', 'user'); repeatLast(); };
-$('helpBtn').onclick   = ()=>{ addBubble('Help', 'user'); App.pending ? helpDuringConfirm() : help(); };
+$('repeatBtn').onclick = ()=>{ if(sessionLocked()) return; addBubble('Repeat that', 'user'); repeatLast(); };
+$('helpBtn').onclick   = ()=>{ if(sessionLocked()) return; addBubble('Help', 'user'); App.pending ? helpDuringConfirm() : help(); };
+
+// During the study, the assistant only responds while a task is running
+function sessionLocked(){
+  if(body.classList.contains('in-session') && (!Study.trial || Study.trial.result)){
+    setStatus(Study.trial ? 'Task finished' : 'Press “Start task” first', true); return true; }
+  return false;
+}
 
 const RE_REPEAT = /^\s*(repeat( that)?|say that again|again|what did you say|pardon)\s*[.?!]*\s*$/i;
 const RE_HELP   = /^\s*(help|what can you do|what can i say)\s*[.?!]*\s*$/i;
@@ -118,6 +121,8 @@ const RE_HELP   = /^\s*(help|what can you do|what can i say)\s*[.?!]*\s*$/i;
 function handle(raw, source){
   let text = (raw||'').trim();
   if(!text || App.busy) return;
+  if(sessionLocked()) return;
+  if(Study.trial){ if(source==='voice') Study.trial.voice++; else Study.trial.typed++; }
 
   if(text==='__garble__'){ text = "set a … rindaa for … (unclear)"; source = 'simulated'; }
 
@@ -224,6 +229,7 @@ function understand(raw){
     const w = window.SIMULATED_WEATHER[when];
     App.weather = {when, ...w};
     renderPanels();
+    if(when==='tomorrow') reachGoal('T1');
     const Day = when==='tomorrow' ? 'Tomorrow' : 'Today';
     return {reply: pick(
       `${Day} will be ${w.desc} with a high of ${w.high} degrees and a low of ${w.low}, so you might want a light jacket in the evening.`,
@@ -233,6 +239,7 @@ function understand(raw){
   // ---- date and time ----
   if(/\b(what day|day is it|what('s| is) (the |today's )?date|today's date|what date)\b/.test(t)){
     const s = new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    reachGoal('T4');
     return {reply: pick(`It's ${s}. Is there anything else I can help you with?`, `Today is ${s}.`)};
   }
   if(/\b(what time|current time|time is it)\b/.test(t)){
@@ -249,7 +256,7 @@ function understand(raw){
 
   // ---- question bank ----
   for(const q of window.QUESTION_BANK){
-    if(q.match.some(re=>re.test(t))) return {reply: pick(q.standard, q.adapted), topic:q.id};
+    if(q.match.some(re=>re.test(t))){ if(q.id==='boil-egg') reachGoal('PRACTICE'); return {reply: pick(q.standard, q.adapted), topic:q.id}; }
   }
 
   // ---- not understood ----
@@ -317,8 +324,11 @@ function describe(a){
 }
 function applyAction(a){
   logEvent('action', JSON.stringify(a));
-  if(a.type==='set_timer') startTimer(a.seconds, a.label);
-  else if(a.type==='create_reminder'){ App.reminders.push({task:a.task, when:a.when||'—'}); renderPanels(); }
+  if(a.type==='set_timer'){ startTimer(a.seconds, a.label); if(a.seconds===300) reachGoal('T3'); }
+  else if(a.type==='create_reminder'){
+    App.reminders.push({task:a.task, when:a.when||'—'}); renderPanels();
+    if(/\b(medic\w*|meds|pills?|tablets?|prescription)\b/.test(a.task) && /\b(8|eight)\b/.test(a.when||'')) reachGoal('T2');
+  }
   else if(a.type==='cancel_timer'){
     const i = a.label ? App.timers.findIndex(t=>t.label.toLowerCase().includes(a.label.toLowerCase())) : -1;
     const t = App.timers.splice(i>=0 ? i : App.timers.length-1, 1)[0];
@@ -418,8 +428,8 @@ function renderPanels(){
     const txt = App.pending.map(describe).join(' and ');
     c.innerHTML = `<div class="rh">⚠️ Please confirm</div><div>Set ${escapeHtml(txt)}?</div>
       <div class="cbtns"><button class="yes">Yes</button><button class="no">No</button></div>`;
-    c.querySelector('.yes').onclick=()=>{ addBubble('Yes','user'); countStudy('turns'); resolveConfirmation('yes'); };
-    c.querySelector('.no').onclick =()=>{ addBubble('No','user');  countStudy('turns'); resolveConfirmation('no');  };
+    c.querySelector('.yes').onclick=()=>{ if(sessionLocked()) return; addBubble('Yes','user'); countStudy('turns'); resolveConfirmation('yes'); };
+    c.querySelector('.no').onclick =()=>{ if(sessionLocked()) return; addBubble('No','user');  countStudy('turns'); resolveConfirmation('no');  };
     stack.appendChild(c);
   }
   if(App.weather){
@@ -456,11 +466,11 @@ function logEvent(type, detail, source){
   Study.events.push({time:new Date().toISOString(), participant:$('pid')?$('pid').value.trim():'',
     condition:App.mode, task:Study.trial?Study.trial.task:'', type, detail:detail||'', source:source||''});
 }
-function countStudy(key){ if(Study.trial) Study.trial[key]++; }
+function countStudy(key){ if(Study.trial && key in Study.trial) Study.trial[key]++; }
 
 function startTrial(){
   Study.trial = {participant:$('pid').value.trim()||'—', age_group:App.ageGroup, condition:App.mode, task:$('taskSel').value,
-    start:performance.now(), turns:0, errors:0, repeats:0, help:0};
+    start:performance.now(), turns:0, errors:0, repeats:0, help:0, voice:0, typed:0};
   logEvent('task_start');
   $('taskStart').disabled=true; $('taskOk').disabled=false; $('taskFail').disabled=false;
   Study.tick = setInterval(updateLive, 250); updateLive();
@@ -549,6 +559,7 @@ function stopListeningUI(){ App.listening=false; $('orb').classList.remove('list
   if($('status').textContent==='Listening…') setStatus('Ready'); }
 
 $('micBtn').onclick = ()=>{
+  if(!App.listening && sessionLocked()) return;
   if(!App.recog) App.recog = initRecog();
   if(!App.recog){
     setStatus('Speech input not available here', true);
@@ -566,114 +577,204 @@ window.speechSynthesis && window.speechSynthesis.getVoices();
 setMode('standard');
 
 /* ============================================================
-   Study flow (short)
-   consent → age → how it works → first version → 3 questions →
-   second version → 3 questions → which did you prefer → thank you
+   Study flow (P4 pilot study)
+   consent → about you → how it works →
+   Version 1: practice task + T1–T4 → SUS → NASA-TLX →
+   Version 2: practice task + T1–T4 → SUS → NASA-TLX →
+   preference and comments → submit
+   Participants see "Version 1 / Version 2", never "Standard" or
+   "Age-Adapted", so the labels cannot steer their ratings.
    ============================================================ */
-// Six statements per version, each tied to a hypothesis (H1 task success, H2 workload, H3 usability).
-// Two are negatively worded so that answering every item the same way stands out.
-const QUESTIONS = [
-  {key:'easy',        q:'It was easy to use.',                          lo:'Disagree', hi:'Agree'},  // H3
-  {key:'understood',  q:'I understood what it said.',                   lo:'Disagree', hi:'Agree'},  // H3
-  {key:'effort',      q:'It took a lot of effort.',                     lo:'Disagree', hi:'Agree'},  // H2
-  {key:'success',     q:'I was able to do what I wanted to do.',        lo:'Disagree', hi:'Agree'},  // H1
-  {key:'frustrating', q:'It was frustrating to use.',                   lo:'Disagree', hi:'Agree'},  // H2
-  {key:'would_use',   q:'I would use this assistant in my daily life.', lo:'Disagree', hi:'Agree'},  // H3
+const URLP = new URLSearchParams(location.search);
+
+// The same scenarios in both versions. Each is a situation, not a command to read
+// aloud, so participants phrase requests in their own words (see P3, Section 2.1).
+// A task succeeds when the assistant reaches the goal state; see reachGoal() calls above.
+const TASKS = [
+  {id:'PRACTICE', name:'Practice', practice:true,
+   text:'You are making breakfast and want to know how to boil an egg. Use the assistant to find out.'},
+  {id:'T1', name:'Weather',  text:'You are planning a walk tomorrow. Use the assistant to find out what the weather will be like tomorrow.'},
+  {id:'T2', name:'Reminder', text:'You need to take your medication at 8 PM tonight and do not want to forget. Use the assistant so that you will not forget.'},
+  {id:'T3', name:'Timer',    text:'You have put something in the oven that needs 5 minutes. Use the assistant to time it.'},
+  {id:'T4', name:'Date',     text:'You have lost track of the date. Use the assistant to find out what day it is today.'},
 ];
-const AGE_CUTOFF = 55;   // participants this age or older start with the age-adapted version
-const FLOW_STEPS = ['consent','age','intro','part0','survey0','part1','survey1','final'];
-const MODE_NAME = m => m==='adapted' ? 'Age-Adapted' : 'Standard';
-const VERSION = i => `${MODE_NAME(Session.order[i])} version`;
+const TASK_LIMIT_S = 180;   // a task not finished in 3 minutes is recorded as timed out
+
+// System Usability Scale, standard wording (Brooke, 1996). 1 = strongly disagree, 5 = strongly agree.
+const SUS = [
+  'I think that I would like to use this system frequently.',
+  'I found the system unnecessarily complex.',
+  'I thought the system was easy to use.',
+  'I think that I would need the support of a technical person to be able to use this system.',
+  'I found the various functions in this system were well integrated.',
+  'I thought there was too much inconsistency in this system.',
+  'I would imagine that most people would learn to use this system very quickly.',
+  'I found the system very cumbersome to use.',
+  'I felt very confident using the system.',
+  'I needed to learn a lot of things before I could get going with this system.',
+];
+// Raw NASA-TLX (Hart and Staveland, 1988): six 0–100 scales in steps of 5 (21 marks), unweighted.
+const TLX = [
+  {key:'mental',      name:'Mental demand',   q:'How mentally demanding were the tasks?',                                          lo:'Very low', hi:'Very high'},
+  {key:'physical',    name:'Physical demand', q:'How physically demanding were the tasks?',                                        lo:'Very low', hi:'Very high'},
+  {key:'temporal',    name:'Temporal demand', q:'How hurried or rushed was the pace of the tasks?',                                lo:'Very low', hi:'Very high'},
+  {key:'performance', name:'Performance',     q:'How successful were you in accomplishing what you were asked to do?',             lo:'Perfect',  hi:'Failure'},
+  {key:'effort',      name:'Effort',          q:'How hard did you have to work to accomplish your level of performance?',          lo:'Very low', hi:'Very high'},
+  {key:'frustration', name:'Frustration',     q:'How insecure, discouraged, irritated, stressed, and annoyed were you?',           lo:'Very low', hi:'Very high'},
+];
+const AGE_RANGES = ['Under 55','55–64','65–74','75–84','85 or older','Prefer not to say'];
+const VA_FREQ = ['Never','Rarely','Sometimes','Often','Very often'];
+const VA_USED = ['Siri','Alexa','Google Assistant','Other','None'];
+
+const FLOW_STEPS = ['consent','about','intro','part0','sus0','tlx0','part1','sus1','tlx1','final'];
+const VERSION = i => `Version ${i+1}`;
+
+// Counterbalancing: send ?order=1 (Standard first) to odd-numbered participants and
+// ?order=2 (Age-Adapted first) to even-numbered ones. Without it, order is random.
+function pickOrder(){
+  const o = URLP.get('order');
+  if(o==='1') return {order:['standard','adapted'], source:'link (order=1)'};
+  if(o==='2') return {order:['adapted','standard'], source:'link (order=2)'};
+  return {order: Math.random()<.5 ? ['standard','adapted'] : ['adapted','standard'], source:'random'};
+}
+function pickPid(){
+  const p = (URLP.get('pid')||'').trim().toUpperCase();
+  return /^P\d{2,3}$/.test(p) ? p : 'P-' + Math.random().toString(36).slice(2,6).toUpperCase();
+}
 
 const Session = {
-  step:'consent', pid:'', name:'', age:null, ageGroup:'', order:[], active:-1,
-  parts:[0,1].map(()=>({mode:'', started_at:'', ended_at:'', answers:{}})),
-  final:{choice:'', comments:''}, saved:null, payload:null,
+  step:'consent', pid:'', isTest: URLP.get('test')==='1', order:[], orderSource:'',
+  info:{age_range:'', va_frequency:'', va_used:[]},
+  parts:[0,1].map(()=>({mode:'', started_at:'', ended_at:'', trials:[], sus:{}, tlx:{}, difficulty:''})),
+  final:{choice:'', why:'', improve:''},
+  active:-1, taskIdx:0, taskState:'ready', lastOutcome:'', timeout:null,
+  sent:false, saved:null, payload:null,
 };
 
-const choice = (act,val,on,t)=>`<button class="choice" role="radio" aria-checked="${on}" data-act="${act}" data-v="${val}"><span class="radio"></span><span><b>${t}</b></span></button>`;
+const choice = (act,val,on,t,role='radio')=>`<button class="choice" role="${role}" aria-checked="${on}" data-act="${act}" data-v="${escapeHtml(val)}"><span class="radio${role==='checkbox'?' box':''}"></span><span><b>${escapeHtml(t)}</b></span></button>`;
 
 const SCREENS = {
   consent: ()=>`
-    <p class="eyebrow">UTD · CS 6326</p>
-    <h1>This is a UTD CS-6326 HCI survey</h1>
-    <p class="lead">You will try two versions of a voice assistant and answer a few quick questions. It takes about 5 minutes, and you can stop at any time. Giving your name and age is optional.${window.SURVEY_ENDPOINT
-      ? ' Your answers are sent to the research team.' : ''}</p>
-    <p class="ask">Are you sure you want to proceed?</p>
+    <p class="eyebrow">UT Dallas · CS 6326 class study</p>
+    <h1>Help us test a voice assistant</h1>
+    <p class="lead">We are a student team in a Human-Computer Interaction class at UT Dallas. We are comparing two versions of a voice assistant to learn which one is easier to use for everyday tasks.</p>
+    <div class="facts">
+      <div class="fact"><div class="ic">🗣️</div><div><b>What you will do</b><span>Try two versions of the assistant. With each one, you will do a short practice task and four everyday tasks, then answer two short questionnaires. It takes about 15–20 minutes.</span></div></div>
+      <div class="fact"><div class="ic">📝</div><div><b>What we record</b><span>Your questionnaire answers, the text of what you say or type to the assistant, and how long each task takes. No audio is saved. Please do not type your name or other personal details.</span></div></div>
+      <div class="fact"><div class="ic">✋</div><div><b>It is your choice</b><span>Taking part is voluntary. You can stop at any time by closing this page, and nothing will be sent.</span></div></div>
+    </div>
+    <p class="ask">Do you agree to take part?</p>
     <div class="actions">
-      <button class="btn primary" data-act="consent-yes">Yes, continue</button>
+      <button class="btn primary" data-act="consent-yes">I agree, continue</button>
       <button class="btn ghost" data-act="consent-no">No, exit</button>
     </div>`,
 
   exit: ()=>`
     <h1>Thank you</h1>
-    <p class="lead">No problem. You can close this window.</p>
+    <p class="lead">Nothing has been recorded. You can close this window.</p>
     <div class="actions"><button class="btn ghost" data-act="goto" data-v="consent">Go back</button></div>`,
 
-  age: ()=>`
+  about: ()=>`
     <p class="eyebrow">About you</p>
-    <h1>A little about you</h1>
-    <p class="lead">Both are optional. Leave them blank to take part anonymously.</p>
-    <label class="field" for="nameIn">Your name <span class="opt">(optional)</span></label>
-    <input id="nameIn" class="textin" type="text" maxlength="80" autocomplete="off" placeholder="Leave blank to stay anonymous" value="${escapeHtml(Session.name)}">
-    <label class="field" for="ageIn">Your age <span class="opt">(optional)</span></label>
-    <input id="ageIn" class="textin" type="number" inputmode="numeric" min="18" max="110" placeholder="For example, 62" value="${Session.age??''}">
-    <p class="formerr" id="ageErr" hidden>Please enter an age between 18 and 110, or leave it blank.</p>
-    <div class="actions"><button class="btn primary" data-act="about">Continue</button></div>`,
+    <h1>A few questions about you</h1>
+    <h2>How old are you?</h2>
+    <div class="choices" role="radiogroup" aria-label="Age range">
+      ${AGE_RANGES.map(a=>choice('age',a,Session.info.age_range===a,a)).join('')}
+    </div>
+    <h2>How often do you use a voice assistant, such as Siri or Alexa?</h2>
+    <div class="choices" role="radiogroup" aria-label="Voice assistant use">
+      ${VA_FREQ.map(a=>choice('freq',a,Session.info.va_frequency===a,a)).join('')}
+    </div>
+    <h2>Which voice assistants have you used? <span class="opt">(choose all that apply)</span></h2>
+    <div class="choices" role="group" aria-label="Voice assistants used">
+      ${VA_USED.map(a=>choice('used',a,Session.info.va_used.includes(a),a,'checkbox')).join('')}
+    </div>
+    <div class="actions"><button class="btn primary" data-act="about" ${aboutDone()?'':'disabled'}>Continue</button></div>`,
 
   intro: ()=>`
     <h1>How it works</h1>
     <div class="timeline">
-      <div class="tl"><div class="n">1</div><div><b>Talk or type</b><span>Tap “Tap to speak” and ask a question, or type it.</span></div></div>
-      <div class="tl"><div class="n">2</div><div><b>Not sure what to ask?</b><span>Pick from the list of questions next to the assistant.</span></div></div>
-      <div class="tl"><div class="n">3</div><div><b>Try both versions</b><span>Ask a few questions in each version, then tell us what you thought. The switch at the top shows which version you are using.</span></div></div>
+      <div class="tl"><div class="n">1</div><div><b>Read the task</b><span>A short task appears at the top of the screen. When you are ready, press “Start task.”</span></div></div>
+      <div class="tl"><div class="n">2</div><div><b>Talk or type</b><span>Press “Tap to speak” and say your request, or type it in the box. Use your own words.</span></div></div>
+      <div class="tl"><div class="n">3</div><div><b>Move on</b><span>When the assistant has done what the task asks, the screen tells you and you can go on. If you get stuck, you can skip a task.</span></div></div>
+      <div class="tl"><div class="n">4</div><div><b>Two versions</b><span>You will do this with two versions of the assistant. Each starts with a practice task that does not count.</span></div></div>
     </div>
-    <div class="actions"><button class="btn primary" data-act="begin" data-v="0">Start the ${VERSION(0)}</button></div>`,
+    <div class="note">For speaking, use Google Chrome and allow the microphone when asked. Typing works in any browser.</div>
+    <div class="actions"><button class="btn primary" data-act="goto" data-v="part0">Continue</button></div>`,
 
-  part1: ()=>`
-    <h1>Now try the ${VERSION(1)}</h1>
-    <p class="lead">Ask a few questions again. This version works a little differently.</p>
-    <div class="actions"><button class="btn primary" data-act="begin" data-v="1">Start the ${VERSION(1)}</button></div>`,
-
-  survey0: ()=>survey(0),
-  survey1: ()=>survey(1),
+  part0: ()=>partIntro(0),
+  part1: ()=>partIntro(1),
+  sus0: ()=>susScreen(0),
+  sus1: ()=>susScreen(1),
+  tlx0: ()=>tlxScreen(0),
+  tlx1: ()=>tlxScreen(1),
 
   final: ()=>`
-    <h1>Which version did you prefer?</h1>
+    <p class="eyebrow">Last questions</p>
+    <h1>Which version would you prefer to use for everyday tasks?</h1>
     <div class="choices" role="radiogroup" aria-label="Preferred version">
       ${choice('pref','A',Session.final.choice==='A',VERSION(0))}
       ${choice('pref','B',Session.final.choice==='B',VERSION(1))}
       ${choice('pref','none',Session.final.choice==='none','No preference')}
     </div>
-    <label class="field" for="commentsIn">Anything else? <span style="font-weight:400;color:#64748b">(optional)</span></label>
-    <textarea id="commentsIn" data-final="comments">${escapeHtml(Session.final.comments)}</textarea>
-    <div class="actions"><button class="btn primary" data-act="submit" ${Session.final.choice?'':'disabled'}>Submit</button></div>`,
+    <label class="field" for="whyIn">Why? <span class="opt">(optional)</span></label>
+    <textarea id="whyIn" data-final="why">${escapeHtml(Session.final.why)}</textarea>
+    <label class="field" for="impIn">What is one improvement you would suggest for either version? <span class="opt">(optional)</span></label>
+    <textarea id="impIn" data-final="improve">${escapeHtml(Session.final.improve)}</textarea>
+    <div class="actions"><button class="btn primary" data-act="submit" ${Session.final.choice?'':'disabled'}>Submit answers</button></div>`,
 
   done: ()=>`
     <div class="bigcheck">✓</div>
-    <h1>Thank you!</h1>
+    <h1>Thank you for taking part</h1>
     <p class="lead">${Session.sent ? 'Your answers have been sent to the research team.'
-      : Session.saved ? (window.SURVEY_ENDPOINT ? 'Your answers are saved and will be sent when the app is next opened with internet.' : 'Your answers are saved.')
-      : 'Please ask the researcher to download your answers.'}</p>
+      : Session.saved ? 'Your answers are saved on this device and will be sent the next time this page is opened with internet.'
+      : 'Please press “Download answers” and send the file to the person who invited you.'}</p>
+    <p class="lead">This study compared a standard voice assistant with one designed around the needs of older adults: shorter replies, slower speech, larger text, and confirmations before setting timers or reminders. Your answers help us find out whether those changes make everyday tasks easier.</p>
     <div class="actions">
-      <button class="btn ghost" data-act="download">Download results</button>
-      <button class="btn ghost" data-act="restart">New session</button>
+      <button class="btn ghost" data-act="download">Download answers</button>
     </div>`,
 };
+const aboutDone = ()=>Session.info.age_range && Session.info.va_frequency && Session.info.va_used.length;
 
-function survey(n){
-  const a = Session.parts[n].answers;
+function partIntro(n){
   return `
-    <p class="eyebrow">${VERSION(n)}</p>
-    <h1>What did you think?</h1>
-    ${QUESTIONS.map(x=>`<div class="q"><p>${x.q}</p>
-      <div class="likert" role="radiogroup" aria-label="${x.q}">
-        ${[1,2,3,4,5].map(v=>`<button role="radio" aria-checked="${a[x.key]===v}" aria-label="${v} of 5" data-act="ans" data-k="${x.key}" data-v="${v}">${v}</button>`).join('')}
-      </div>
-      <div class="scale-labels"><span>${x.lo}</span><span>${x.hi}</span></div></div>`).join('')}
-    <div class="actions"><button class="btn primary" data-act="snext" ${surveyDone(n)?'':'disabled'}>Next</button></div>`;
+    <p class="eyebrow">${VERSION(n)} of 2</p>
+    <h1>${n===0 ? 'Start with the first version' : 'Now try the second version'}</h1>
+    <p class="lead">${n===0 ? 'You will do one practice task, then four short tasks.'
+      : 'This version works a little differently. You will start with the same practice task, then the same four tasks.'}</p>
+    <ul class="tasklist">${TASKS.map(t=>`<li><span class="ic">${t.practice?'🎯':'•'}</span><span>${t.practice?'Practice (does not count)':t.name}</span></li>`).join('')}</ul>
+    <div class="actions"><button class="btn primary" data-act="begin" data-v="${n}">Start ${VERSION(n)}</button></div>`;
 }
-const surveyDone = n => QUESTIONS.every(x=>Session.parts[n].answers[x.key]!=null);
+
+function susScreen(n){
+  const a = Session.parts[n].sus;
+  return `
+    <p class="eyebrow">${VERSION(n)}: questionnaire 1 of 2</p>
+    <h1>What did you think of ${VERSION(n)}?</h1>
+    <p class="lead">For each statement, choose how much you agree. “The system” means the version you just used.</p>
+    ${SUS.map((q,i)=>`<div class="q"><p><span class="qn">${i+1}</span><span>${q}</span></p>
+      <div class="likert" role="radiogroup" aria-label="${escapeHtml(q)}">
+        ${[1,2,3,4,5].map(v=>`<button role="radio" aria-checked="${a['q'+(i+1)]===v}" aria-label="${v} of 5" data-act="sus" data-k="q${i+1}" data-v="${v}">${v}</button>`).join('')}
+      </div>
+      <div class="scale-labels"><span>Strongly disagree</span><span>Strongly agree</span></div></div>`).join('')}
+    <div class="actions"><button class="btn primary" data-act="susnext" ${susDone(n)?'':'disabled'}>Continue</button></div>`;
+}
+const susDone = n => SUS.every((_,i)=>Session.parts[n].sus['q'+(i+1)]!=null);
+
+function tlxScreen(n){
+  const a = Session.parts[n].tlx;
+  return `
+    <p class="eyebrow">${VERSION(n)}: questionnaire 2 of 2</p>
+    <h1>How did the tasks feel with ${VERSION(n)}?</h1>
+    <p class="lead">Move each slider to show your answer. Think about all the tasks you just did with this version.</p>
+    ${TLX.map(x=>`<div class="q"><p><span><b>${x.name}.</b> ${x.q}</span></p>
+      <input type="range" min="0" max="100" step="5" value="${a[x.key]??50}" class="${a[x.key]==null?'untouched':''}" data-tlx="${x.key}" aria-label="${x.name}: ${x.q}">
+      <div class="scale-labels"><span>${x.lo}</span><output id="out-${x.key}">${a[x.key]==null?'Not answered':a[x.key]}</output><span>${x.hi}</span></div></div>`).join('')}
+    <label class="field" for="diffIn">What, if anything, made it difficult to complete the tasks? <span class="opt">(optional)</span></label>
+    <textarea id="diffIn" data-diff="${n}">${escapeHtml(Session.parts[n].difficulty)}</textarea>
+    <div class="actions"><button class="btn primary" data-act="tlxnext" ${tlxDone(n)?'':'disabled'}>Continue</button></div>`;
+}
+const tlxDone = n => TLX.every(x=>Session.parts[n].tlx[x.key]!=null);
 
 function progressDots(){
   const at = FLOW_STEPS.indexOf(Session.step==='done' ? 'final' : Session.step==='exit' ? 'consent' : Session.step);
@@ -690,7 +791,7 @@ function show(step){
   const h = f.querySelector('h1'); if(h){ h.tabIndex = -1; h.focus({preventScroll:true}); }
 }
 
-/* ---------- Using one version ---------- */
+/* ---------- Tasks inside one version ---------- */
 function resetConversation(){
   App.history = []; App.pending = null; App.misses = 0; App.lastAssistant = ''; App.awaiting = null; App.weather = null;
   App.timers.forEach(t=>clearInterval(t.interval)); App.timers = []; App.reminders = [];
@@ -701,83 +802,167 @@ function resetConversation(){
 }
 function beginPart(n){
   const p = Session.parts[n];
-  Session.active = n;
+  Session.active = n; Session.taskIdx = 0; Session.taskState = 'ready';
   setMode(Session.order[n]);
   resetConversation();
   p.mode = Session.order[n]; p.started_at = new Date().toISOString();
   logEvent('part_start', `${VERSION(n)} (${p.mode})`);
-  $('sbVersion').textContent = VERSION(n);
-  $('sbFinish').textContent = 'Done with this version →';
   $('flow').hidden = true;
   body.classList.add('in-session');
+  renderTaskBar();
   window.scrollTo(0,0);
 }
-$('sbFinish').onclick = ()=>{
+function renderTaskBar(){
+  const n = Session.active, t = TASKS[Session.taskIdx];
+  const count = t.practice ? 'Practice task (does not count)' : `Task ${Session.taskIdx} of ${TASKS.length-1}`;
+  const last = Session.taskIdx === TASKS.length-1;
+  let controls;
+  if(Session.taskState==='ready') controls = `<button class="sb-finish" data-sb="start">Start task</button>`;
+  else if(Session.taskState==='running') controls = `<button class="sb-skip" data-sb="skip">Skip this task</button>`;
+  else controls = `<span class="sb-result ${Session.lastOutcome}">${
+      Session.lastOutcome==='success' ? '✓ Done. The assistant did what the task asked.'
+      : Session.lastOutcome==='timeout' ? 'Time is up for this task. Let’s move on.' : 'Task skipped.'}</span>
+    <button class="sb-finish" data-sb="next">${last ? 'Continue to questions' : 'Next task'}</button>`;
+  $('sbInner').innerHTML = `
+    <div class="sb-head"><span class="sb-pill">${VERSION(n)}</span><span class="sb-count">${count}</span></div>
+    <p class="sb-text">${escapeHtml(t.text)}</p>
+    <div class="sb-controls">${controls}</div>`;
+}
+function startTask(){
+  const t = TASKS[Session.taskIdx];
+  App.pending = null; App.awaiting = null; App.misses = 0; App.weather = null; renderPanels();
+  Study.trial = {participant:Session.pid, condition:App.mode, position:Session.active+1, task:t.id, practice:!!t.practice,
+    start:performance.now(), turns:0, errors:0, repeats:0, help:0, voice:0, typed:0};
+  logEvent('task_start', t.id);
+  Session.taskState = 'running'; renderTaskBar(); setStatus('Ready');
+  clearTimeout(Session.timeout);
+  Session.timeout = setTimeout(()=>finishTask('timeout'), TASK_LIMIT_S*1000);
+}
+function finishTask(outcome){
+  const tr = Study.trial; if(!tr || tr.result) return;
+  clearTimeout(Session.timeout);
+  tr.result = outcome;
+  tr.seconds = +((performance.now()-tr.start)/1000).toFixed(1);
+  delete tr.start;
+  logEvent('task_end', `${tr.task}: ${outcome}`);
+  Session.parts[Session.active].trials.push(tr);
+  Session.lastOutcome = outcome;
+  // let the assistant's reply show before the bar changes
+  setTimeout(()=>{ Study.trial = null; Session.taskState = 'done'; renderTaskBar(); }, outcome==='success' ? 1200 : 0);
+}
+// Called by the answer engine when the goal state of the running task is reached
+function reachGoal(id){ if(body.classList.contains('in-session') && Study.trial && Study.trial.task===id && !Study.trial.result) finishTask('success'); }
+
+function nextTask(){
+  if(Session.taskIdx < TASKS.length-1){ Session.taskIdx++; Session.taskState = 'ready'; renderTaskBar(); window.scrollTo(0,0); return; }
   const n = Session.active;
   Session.parts[n].ended_at = new Date().toISOString();
   logEvent('part_end', VERSION(n));
   try{ window.speechSynthesis.cancel(); }catch(e){}
   if(App.listening && App.recog) App.recog.stop();
-  show(n===0 ? 'survey0' : 'survey1');
-};
+  resetConversation();
+  show(n===0 ? 'sus0' : 'sus1');
+}
+$('sbInner').addEventListener('click', e=>{
+  const b = e.target.closest('[data-sb]'); if(!b) return;
+  if(b.dataset.sb==='start') startTask();
+  else if(b.dataset.sb==='skip') finishTask('skipped');
+  else if(b.dataset.sb==='next') nextTask();
+});
 
 /* ---------- Flow interactions ---------- */
+function setChecked(group, b, multi){
+  if(multi) b.setAttribute('aria-checked', String(b.getAttribute('aria-checked')!=='true'));
+  else $('flow').querySelectorAll(`[data-act="${group}"]`).forEach(x=>x.setAttribute('aria-checked', String(x===b)));
+}
 $('flow').addEventListener('click', e=>{
   const b = e.target.closest('[data-act]'); if(!b || b.disabled) return;
   const act = b.dataset.act, v = b.dataset.v;
   if(act==='consent-yes'){
-    Session.pid = 'P-' + Math.random().toString(36).slice(2,6).toUpperCase();
+    Session.pid = pickPid();
+    const o = pickOrder(); Session.order = o.order; Session.orderSource = o.source;
     $('pid').value = Session.pid;
-    logEvent('consent','yes'); show('age');
+    logEvent('consent','yes'); logEvent('order', `${Session.order.join(' → ')} (${Session.orderSource})`);
+    show('about');
   }
-  else if(act==='consent-no') show('exit');           // declining records nothing
+  else if(act==='consent-no') show('exit');            // declining records nothing
   else if(act==='goto') show(v);
-  else if(act==='about'){
-    const raw = $('ageIn').value.trim(), age = raw==='' ? null : Number(raw);
-    if(age!==null && !(Number.isInteger(age) && age>=18 && age<=110)){ $('ageErr').hidden = false; $('ageIn').focus(); return; }
-    Session.name = $('nameIn').value.trim().slice(0,80);
-    Session.age = age;
-    Session.ageGroup = age===null ? 'not stated' : age>=AGE_CUTOFF ? `${AGE_CUTOFF}+` : `under ${AGE_CUTOFF}`;
-    App.ageGroup = Session.ageGroup; logEvent('age_group', Session.ageGroup);
-    // the age group picks which version comes first; everyone tries both
-    Session.order = Session.ageGroup===`${AGE_CUTOFF}+` ? ['adapted','standard'] : ['standard','adapted'];
-    show('intro');
+  else if(act==='age' || act==='freq'){
+    Session.info[act==='age'?'age_range':'va_frequency'] = v; setChecked(act, b);
+    $('flow').querySelector('[data-act="about"]').disabled = !aboutDone();
   }
+  else if(act==='used'){
+    let u = Session.info.va_used;
+    if(u.includes(v)) u = u.filter(x=>x!==v);
+    else u = v==='None' ? ['None'] : [...u.filter(x=>x!=='None'), v];
+    Session.info.va_used = u;
+    $('flow').querySelectorAll('[data-act="used"]').forEach(x=>x.setAttribute('aria-checked', String(u.includes(x.dataset.v))));
+    $('flow').querySelector('[data-act="about"]').disabled = !aboutDone();
+  }
+  else if(act==='about'){ logEvent('about_done'); show('intro'); }
   else if(act==='begin') beginPart(+v);
-  else if(act==='ans'){
+  else if(act==='sus'){
     const n = Session.active;
-    Session.parts[n].answers[b.dataset.k] = +v;
+    Session.parts[n].sus[b.dataset.k] = +v;
     b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-checked', String(x===b)));
-    $('flow').querySelector('[data-act="snext"]').disabled = !surveyDone(n);
+    $('flow').querySelector('[data-act="susnext"]').disabled = !susDone(n);
   }
-  else if(act==='snext'){ logEvent('survey_done', VERSION(Session.active)); show(Session.active===0 ? 'part1' : 'final'); }
+  else if(act==='susnext'){ logEvent('sus_done', VERSION(Session.active)); show(Session.active===0 ? 'tlx0' : 'tlx1'); }
+  else if(act==='tlxnext'){ logEvent('tlx_done', VERSION(Session.active)); show(Session.active===0 ? 'part1' : 'final'); }
   else if(act==='pref'){
-    Session.final.choice = v;
-    $('flow').querySelectorAll('[data-act="pref"]').forEach(x=>x.setAttribute('aria-checked', String(x===b)));
+    Session.final.choice = v; setChecked('pref', b);
     $('flow').querySelector('[data-act="submit"]').disabled = false;
   }
   else if(act==='submit') submitSession();
   else if(act==='download') downloadJson();
-  else if(act==='restart') location.reload();
 });
 $('flow').addEventListener('input', e=>{
-  const f = e.target.dataset.final; if(f) Session.final[f] = e.target.value;
+  const el = e.target;
+  if(el.dataset.final) Session.final[el.dataset.final] = el.value;
+  if(el.dataset.diff!=null) Session.parts[+el.dataset.diff].difficulty = el.value;
+  if(el.dataset.tlx){
+    const n = Session.active;
+    Session.parts[n].tlx[el.dataset.tlx] = +el.value;
+    el.classList.remove('untouched');
+    $('out-'+el.dataset.tlx).textContent = el.value;
+    $('flow').querySelector('[data-act="tlxnext"]').disabled = !tlxDone(n);
+  }
 });
+
+/* ---------- Scoring ---------- */
+// SUS: odd items contribute (answer − 1), even items (5 − answer); the sum × 2.5 gives 0–100.
+function susScore(a){
+  let sum = 0;
+  for(let i=1;i<=10;i++){ const x = a['q'+i]; if(x==null) return null; sum += i%2 ? x-1 : 5-x; }
+  return sum*2.5;
+}
+// Raw TLX: the unweighted mean of the six scales (0–100, higher = more workload).
+function tlxRaw(a){
+  const v = TLX.map(x=>a[x.key]); if(v.some(x=>x==null)) return null;
+  return +(v.reduce((s,x)=>s+x,0)/v.length).toFixed(1);
+}
 
 /* ---------- Saving ---------- */
 function buildPayload(){
   return {
+    schema: 2,
     participant_id: Session.pid,
-    name: Session.name,
-    age: Session.age,
-    age_group: Session.ageGroup,
+    is_test: Session.isTest,
     order: Session.order,
-    parts: Session.parts.map((p,i)=>({version: VERSION(i), mode: p.mode, started_at: p.started_at, ended_at: p.ended_at, answers: p.answers})),
+    order_source: Session.orderSource,
+    info: Session.info,
+    speech_input_available: !!SR,
+    parts: Session.parts.map((p,i)=>({
+      position: i+1, mode: p.mode, started_at: p.started_at, ended_at: p.ended_at,
+      trials: p.trials, sus: p.sus, sus_score: susScore(p.sus), tlx: p.tlx, tlx_raw: tlxRaw(p.tlx),
+      difficulty: p.difficulty.trim(),
+    })),
     preference: {
       choice: Session.final.choice,
       mode: Session.final.choice==='A' ? Session.order[0] : Session.final.choice==='B' ? Session.order[1] : 'none',
     },
-    comments: Session.final.comments.trim(),
+    why: Session.final.why.trim(),
+    improve: Session.final.improve.trim(),
     events: Study.events,
     submitted_at: new Date().toISOString(),
   };
@@ -790,14 +975,13 @@ $('exportSessions').onclick = ()=>{
   a.download = `all-sessions-${new Date().toISOString().slice(0,10)}.json`; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
 };
-// Send one survey to the research team's Google Sheet (link set in config.js).
-// Apps Script does not allow reading the reply from another site, so a send counts as
-// done when the request leaves without a network error; the device keeps a copy either way.
+// Apps Script does not let another site read its reply, so a send counts as done when the
+// request leaves without a network error; the device keeps a copy either way.
 function sendToSheet(payload){
   if(!window.SURVEY_ENDPOINT) return Promise.resolve(false);
   return fetch(window.SURVEY_ENDPOINT, {
     method:'POST', mode:'no-cors',
-    headers:{'Content-Type':'text/plain;charset=utf-8'},   // plain text avoids a CORS preflight
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
     body: JSON.stringify(payload),
   }).then(()=>true, ()=>false);
 }
@@ -808,7 +992,6 @@ function markSent(submittedAt){
     localStorage.setItem(STORE_KEY, JSON.stringify(all));
   }catch(e){}
 }
-// Surveys that could not be sent (no internet) are retried the next time the app opens
 async function resendUnsent(){
   if(!window.SURVEY_ENDPOINT) return;
   for(const s of savedSessions().filter(s=>s._sent===false)){
@@ -819,6 +1002,7 @@ async function resendUnsent(){
 async function submitSession(){
   const btn = $('flow').querySelector('[data-act="submit"]');
   btn.disabled = true; btn.textContent = 'Sending…';
+  logEvent('submit');
   Session.payload = buildPayload();
   try{
     const all = savedSessions(); all.push({...Session.payload, _sent:false});
@@ -835,7 +1019,7 @@ function downloadJson(){
   a.download = `${Session.pid||'session'}.json`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
 }
 
-// ?free=1 skips the study flow and opens the assistant directly
+// ?free=1 skips the study flow and opens the assistant directly (with the version switch)
 resendUnsent();
-if(new URLSearchParams(location.search).get('free')==='1') $('flow').hidden = true;
+if(URLP.get('free')==='1'){ $('flow').hidden = true; body.classList.add('free'); }
 else show('consent');
